@@ -13,6 +13,9 @@ const path = require("path");
 const session = require("express-session"); //level-5
 const passport = require("passport"); //level-5
 const passportLocalMongoose = require("passport-local-mongoose"); //level-5
+const GoogleStrategy = require("passport-google-oauth20").Strategy;
+const findOrCreate = require("mongoose-findorcreate"); //level-6
+const { rmSync } = require("fs");
 
 // level 5 security requires (cookies and sessions):
 //passport passport-local passport-local-mongoose express-session
@@ -37,13 +40,14 @@ mongoose.connect("mongodb://localhost:27017/levleOneDB", {
   useNewUrlParser: true,
 });
 
-const k = 556;
 const userSchema = new mongoose.Schema({
   username: String,
   password: String,
+  googleId: String //level-6
 });
 
 userSchema.plugin(passportLocalMongoose); //level-5
+userSchema.plugin(findOrCreate); //level-6
 
 // const secretKey =process.env.SECRET
 // userSchema.plugin(encrypt,{secret:secretKey,encryptedFields:['password']}); // here we have applied the encryption on password field
@@ -51,12 +55,57 @@ userSchema.plugin(passportLocalMongoose); //level-5
 const User = new mongoose.model("User", userSchema);
 
 passport.use(User.createStrategy()); //level-5
-passport.serializeUser(User.serializeUser()); //level-5
-passport.deserializeUser(User.deserializeUser()); //level-5
+// passport.serializeUser(User.serializeUser()); //level-5
+// passport.deserializeUser(User.deserializeUser()); //level-5
+
+passport.serializeUser(function(user, done) {
+  done(null, user.id);
+});
+
+passport.deserializeUser(function(id, done) {
+  User.findById(id).then(function(err, user) {
+    done(err, user);
+  });
+});
+
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: process.env.CLIENT_ID,
+      clientSecret: process.env.CLIENT_SECRET,
+      callbackURL: "http://localhost:3000/auth/google/secrets",
+      userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo"
+    },
+    function (accessToken, refreshToken, profile, cb) {
+      // console.log(profile);
+      User.findOrCreate({ googleId: profile.id }, function (user,err ) {
+        console.log("ok",err);
+        return cb(user);
+      });
+    }
+  )
+); //level-6
 
 app.get("/", function (req, res) {
   res.render("home");
 });
+
+app.get("/auth/google",
+  passport.authenticate('google', { scope: ["profile"] })
+);
+
+app.get('/auth/google/secrets', 
+  passport.authenticate('google', { failureRedirect: '/login' }),
+
+  function(req, res) {
+    console.log('yo');
+    // Successful authentication, redirect home.
+    res.redirect('/secrets');  
+      // res.render('secrets');
+
+  });
+
+
 
 app.get("/login", function (req, res) {
   res.render("login");
@@ -67,21 +116,31 @@ app.get("/register", function (req, res) {
 });
 
 app.get("/secrets", function (req, res) {
+  console.log('line 116');
   if (req.isAuthenticated()) {
     res.render("secrets");
   } else {
     res.redirect("/login");
   }
+  // User.find({"secret": {$ne: null}}, function( foundUsers,err){
+  //   if (err){
+  //     console.log(err); 
+  //   } else {
+  //     if (foundUsers) {
+  //       res.render("secrets", {usersWithSecrets: foundUsers});
+  //     }
+  //   }
+  // });
 });
 
 app.get("/logout", function (req, res) {
-  req.logOut(function(err){
+  req.logout(function (err) {
     if (err) {
-      console.log(err);
+      console.log("line 121"+err);
+    } else {
+      res.redirect("/");
     }
-    else{ res.redirect("/");}
   });
- 
 });
 
 app.post("/register", function (req, res) {
@@ -124,9 +183,10 @@ app.post("/register", function (req, res) {
     req.body.password,
     function (err, user) {
       if (err) {
-        console.log(err);
+        console.log("line 168"+err);
         res.redirect("/register");
       } else {
+        console.log("yo");
         console.log(user);
         passport.authenticate("local")(req, res, function () {
           res.redirect("/secrets");
@@ -189,7 +249,7 @@ app.post("/login", function (req, res) {
 
   req.login(user, function (err) {
     if (err) {
-      console.log(err);
+      console.log("line 233"+err);
     } else {
       passport.authenticate("local")(req, res, function () {
         res.redirect("/secrets");
